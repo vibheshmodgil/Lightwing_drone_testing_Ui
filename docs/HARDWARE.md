@@ -26,31 +26,59 @@ MSB-first, mode 3**, which is what the PMW3901 expects.
 
 ---
 
-## Unverified pin map
+## Motor and battery pin map
 
-**These are guesses.** LiteWing publishes the sensor pinout but not the motor
-mapping or the battery-sense channel. The values below are the sketch defaults
-and the starting point, not ground truth.
+Verified. Motor pins are confirmed against the vendor's own firmware,
+[`LiteWing-Arduino/Arduino-LiteWing-DMP/motors.h`](https://github.com/Circuit-Digest/LiteWing/blob/main/LiteWing-Arduino/Arduino-LiteWing-DMP/motors.h).
+The battery ADC pin and divider are traced from the `ADC_BAT` net in
+[`hardware/LiteWingV2.5C/LiteWingV2.5C.kicad_sch`](https://github.com/Circuit-Digest/LiteWing/tree/main/hardware/LiteWingV2.5C).
 
-| Function | Default GPIO | Status |
-|---|---|---|
-| Motor 1 | 7 | guess |
-| Motor 2 | 8 | guess |
-| Motor 3 | 9 | guess |
-| Motor 4 | 12 | guess |
-| Battery ADC | 4 | guess |
-| Battery divider ratio | 2.0 | guess |
+| Function | GPIO | Schematic net | Source |
+|---|---|---|---|
+| Motor 1 (front right) | 5 | `MOT_1` | `motors.h` |
+| Motor 2 (back left) | 6 | `MOT_2` | `motors.h` |
+| Motor 3 (back right) | 3 | `MOT_3` | `motors.h` |
+| Motor 4 (front left) | 4 | `MOT_4` | `motors.h` |
+| Battery ADC | 2 | `ADC_BAT` | schematic trace |
+| Battery divider | 2.0 | R26/R27, 100K/100K | schematic BOM |
 
-Correct them from the **Pins** panel in the dashboard — no reflash needed. The
-authoritative source is `DroneV2.5C_Schematics.pdf` in the
-[`Circuit-Digest/LiteWing`](https://github.com/Circuit-Digest/LiteWing) repo.
+GPIO 2 is **ADC1_CH1**, which matters: ADC2 is unusable while WiFi is active,
+and this firmware runs an access point continuously.
 
-Values are persisted to NVS under the Preferences namespace **`bench`**, keys
-`m0`–`m3`, `vbat`, `div`. Saving triggers a reboot so the PWM channels
-re-attach to the new pins.
+GPIO 3 is an ESP32-S3 strapping pin (JTAG source select). It is safe to drive
+as a motor output at runtime — the gate pulldown keeps it defined at boot — but
+do not add an external pull-up to it.
 
-If you remap the battery pin, **keep it on ADC1**. ADC2 is unusable while WiFi
-is active, and this firmware runs an access point continuously.
+### Pins these are *not*
+
+An earlier revision of this firmware guessed motors on GPIO `7, 8, 9, 12` and
+battery sense on GPIO `4`. Those are wrong, and wrong in a way that fails
+silently:
+
+| GPIO | Actually connected to |
+|---|---|
+| 7 | `LED_BLUE` |
+| 8 | `LED_RED` |
+| 9 | `LED_GREEN` |
+| 12 | `MPU_INT` |
+
+Driving the motor sliders under that map dimmed the RGB status LED instead of
+spinning anything, and GPIO 4 — read as the battery ADC — is really `MOT_4`, so
+voltage readings were meaningless too.
+
+### Overriding from the UI
+
+The Pins panel still overrides all six values at runtime, persisted to NVS
+under the Preferences namespace **`bench`**, keys `m0`–`m3`, `vbat`, `div`.
+Saving triggers a reboot so the PWM channels re-attach to the new pins.
+
+**NVS wins over the firmware defaults.** If stale values were saved from an
+earlier session, reflashing will *not* clear them — flashing does not erase the
+NVS partition. Either correct them in the Pins panel, or reflash with
+**Erase All Flash Before Sketch Upload** enabled.
+
+There is no validation on write: an invalid GPIO is accepted, persisted, and
+fails at the next boot.
 
 ---
 

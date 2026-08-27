@@ -21,9 +21,16 @@
    CircuitDigest web flasher.
 
    PIN MAP: I2C0/I2C1/SPI/buzzer pins are confirmed from the LiteWing wiki.
-   Motor and battery-ADC pins are NOT published — the defaults below are a
-   starting guess. Use the Pins panel to correct them, or read them off
-   DroneV2.5C_Schematics.pdf in the Circuit-Digest/LiteWing repo.
+   Motor pins are confirmed against LiteWing-Arduino/.../motors.h; the
+   battery ADC pin and divider are traced from the ADC_BAT net in
+   hardware/LiteWingV2.5C/LiteWingV2.5C.kicad_sch (both in the
+   Circuit-Digest/LiteWing repo). The Pins panel can still override them.
+
+   NOTE: GPIO 7/8/9 are the RGB status LEDs and GPIO 12 is MPU_INT — an
+   earlier revision of this file used those as motor pins by mistake. If
+   you ever pressed "Save pins", those bad values are still in NVS and will
+   override the defaults below; fix them in the Pins panel or reflash with
+   "Erase All Flash Before Sketch Upload" enabled.
    ========================================================================== */
 
 #include <WiFi.h>
@@ -53,9 +60,9 @@ static const char* AP_PASS = "litewing";
 #define WD_MS      1500      // disarm if UI goes quiet this long
 
 struct Cfg {
-  int m[4] = { 7, 8, 9, 12 };   // GUESS — verify against schematic
-  int vbatPin = 4;              // GUESS
-  float vbatDiv = 2.0f;         // divider ratio
+  int m[4] = { 5, 6, 3, 4 };    // MOT_1..MOT_4, from LiteWingV2.5C.kicad_sch
+  int vbatPin = 2;              // ADC_BAT (ADC1_CH1)
+  float vbatDiv = 2.0f;         // R26/R27 = 100K/100K -> 1:2
 } cfg;
 
 Preferences prefs;

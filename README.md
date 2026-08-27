@@ -66,7 +66,7 @@ auto-reset transistors populated.
 ## Documentation
 
 - **[docs/HARDWARE.md](docs/HARDWARE.md)** — pin map, sensor addresses, motor
-  drive topology, battery sensing, which pins are confirmed and which are guesses
+  drive topology, battery sensing, verified against the vendor schematic
 - **[docs/UI.md](docs/UI.md)** — every panel, control and readout, and how to
   interpret a health sweep
 - **[docs/API.md](docs/API.md)** — the HTTP endpoints, for scripting the rig
@@ -94,12 +94,13 @@ This firmware will spin motors on a web request. Treat it accordingly.
 
 ## Known issues
 
-**Motor and battery pins are unverified.** The defaults — motors on GPIO
-`7, 8, 9, 12` and battery ADC on GPIO `4` — are a starting guess, not values
-read off a schematic. LiteWing publishes its I2C/SPI pinout but not the motor
-mapping. Use the **Pins** panel to correct them against
-`DroneV2.5C_Schematics.pdf` in the `Circuit-Digest/LiteWing` repo. Expect the
-first sweep on an uncorrected pin map to show four dead motors.
+**Stale pin values in NVS survive a reflash.** The motor and battery pins are
+now verified against the vendor firmware and schematic (see
+[docs/HARDWARE.md](docs/HARDWARE.md#motor-and-battery-pin-map)), but if you
+saved wrong values from the Pins panel at any point, those persist in NVS and
+override the firmware defaults — flashing does not erase the NVS partition.
+Correct them in the Pins panel, or reflash with **Erase All Flash Before Sketch
+Upload** enabled.
 
 **Requires Arduino-ESP32 core 3.x.** The 2.x compatibility branch in
 `pwmWrite()` is broken: core 2.x's `ledcWrite()` takes an LEDC *channel*, but

@@ -98,7 +98,11 @@ voltage while that motor ran alone at that level.
 - **One motor sagging far more than its peers**: a partially shorted winding or
   a seized bearing forcing stall current. Check whether it is hot to the touch.
 - **All four near zero**: almost always a wrong pin map rather than four dead
-  motors. Fix the Pins panel first, then re-sweep.
+  motors — check the Pins panel against
+  [HARDWARE.md](HARDWARE.md#motor-and-battery-pin-map) before suspecting
+  hardware. A telltale: if moving a motor slider changes the brightness of the
+  onboard RGB LED, the pins are set to `7, 8, 9, 12`, which are the LED
+  channels, not the motors.
 - **Falling sag as duty rises**: not physical. Suspect a loose battery
   connector browning out under load, or thermal cut-back.
 
@@ -168,9 +172,10 @@ the battery ADC pin, and the battery divider ratio.
 required so the PWM channels re-attach to the new pins. The AP drops for a few
 seconds and the browser will need a refresh.
 
-This panel exists because the motor and battery pins in the firmware are
-**guesses**. Expect to use it. See
-[HARDWARE.md](HARDWARE.md#unverified-pin-map).
+Firmware defaults are now the verified values, so this panel is for
+overrides and board revisions rather than routine setup. See
+[HARDWARE.md](HARDWARE.md#motor-and-battery-pin-map). Note that values saved
+here **override the firmware defaults and survive a reflash**.
 
 ---
 
