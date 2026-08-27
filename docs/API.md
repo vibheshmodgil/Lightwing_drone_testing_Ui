@@ -30,14 +30,19 @@ interval, or your motors will cut out mid-test.
 
 ```json
 {
-  "vbat":  3.874,
-  "imu":   true,
-  "armed": false,
-  "a":     [0.001, -0.004, 0.998],
-  "g":     [0.12, -0.05, 0.01],
-  "roll":  0.21,
-  "pitch": -0.44,
-  "temp":  31.2
+  "vbat":   3.874,
+  "imu":    true,
+  "armed":  false,
+  "a":      [0.001, -0.004, 0.998],
+  "g":      [0.12, -0.05, 0.01],
+  "ar":     [4, -16, 4088],
+  "gr":     [2, -1, 0],
+  "bias":   [1.42, -0.87, 0.33],
+  "roll":   0.21,
+  "pitch":  -0.44,
+  "aroll":  0.35,
+  "apitch": -0.51,
+  "temp":   31.2
 }
 ```
 
@@ -46,11 +51,22 @@ interval, or your motors will cut out mid-test.
 | `vbat` | float | pack voltage, V, 16-sample mean x divider ratio |
 | `imu` | bool | last MPU6050 read succeeded |
 | `armed` | bool | master arm state |
-| `a` | float[3] | accelerometer X/Y/Z in g |
-| `g` | float[3] | gyro X/Y/Z in dps, bias-corrected |
-| `roll` | float | complementary-filter roll, degrees |
-| `pitch` | float | complementary-filter pitch, degrees |
+| `a` | float[3] | accelerometer X/Y/Z in **g** (scaled) |
+| `g` | float[3] | gyro X/Y/Z in **dps**, bias-corrected |
+| `ar` | int[3] | accelerometer X/Y/Z as **raw LSB counts** (4096 LSB/g) |
+| `gr` | int[3] | gyro X/Y/Z as **raw LSB counts** (16.4 LSB/dps), no bias removed |
+| `bias` | float[3] | gyro bias currently being subtracted, dps |
+| `roll` | float | complementary-filtered roll, degrees |
+| `pitch` | float | complementary-filtered pitch, degrees |
+| `aroll` | float | **accelerometer-only** roll, unfiltered, degrees |
+| `apitch` | float | **accelerometer-only** pitch, unfiltered, degrees |
 | `temp` | float | MPU6050 die temperature, Celsius |
+
+Comparing the raw and filtered pairs is the point: `ar`/`gr` against `a`/`g`
+shows whether scaling is sane, and `aroll`/`apitch` against `roll`/`pitch`
+shows what the complementary filter is actually contributing. On a still,
+level board all four angles should sit near zero and near each other; if
+`aroll` is noisy but `roll` is smooth, the filter is doing its job.
 
 ---
 

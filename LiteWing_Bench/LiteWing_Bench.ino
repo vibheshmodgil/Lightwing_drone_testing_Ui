@@ -74,7 +74,8 @@ volatile bool armed = false;
 uint32_t lastCmd = 0;
 
 float gBias[3] = {0,0,0};
-float roll = 0, pitch = 0;
+float roll = 0, pitch = 0;      // complementary-filtered
+float aRoll = 0, aPitch = 0;    // accelerometer-only, unfiltered
 int16_t ax,ay,az,gx,gy,gz; int16_t traw;
 uint32_t lastImu = 0;
 bool imuOk = false;
@@ -133,10 +134,12 @@ static void imuRead() {
 
   float axg=ax/4096.0f, ayg=ay/4096.0f, azg=az/4096.0f;
   float gxd=(gx/16.4f)-gBias[0], gyd=(gy/16.4f)-gBias[1];
+
+  aRoll  = atan2f(ayg, azg)*57.2958f;
+  aPitch = atan2f(-axg, sqrtf(ayg*ayg+azg*azg))*57.2958f;
+
   uint32_t now=micros(); float dt=(now-lastImu)/1e6f; lastImu=now;
   if (dt<=0 || dt>0.2f) return;
-  float aRoll  = atan2f(ayg, azg)*57.2958f;
-  float aPitch = atan2f(-axg, sqrtf(ayg*ayg+azg*azg))*57.2958f;
   const float k = 0.98f;
   roll  = k*(roll  + gxd*dt) + (1-k)*aRoll;
   pitch = k*(pitch + gyd*dt) + (1-k)*aPitch;
@@ -205,8 +208,8 @@ static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>LiteWing Bench</title><style>
 :root{--bg:#0e1116;--pnl:#161b22;--ln:#2a323d;--fg:#d7dee8;--dim:#7d8998;--ok:#4fd08a;--warn:#e0b341;--hot:#e05a4f}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:10px}
+*{box-sizing:border-box}body{margin:0 auto;max-width:560px;background:var(--bg);
+color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:10px}
 h1{font-size:14px;letter-spacing:.14em;text-transform:uppercase;margin:2px 0 12px;color:var(--dim)}
 .p{background:var(--pnl);border:1px solid var(--ln);padding:10px;margin-bottom:10px}
 .p>h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 0 8px;font-weight:500}
@@ -223,7 +226,47 @@ input[type=number]{width:70px;background:#0e1116;color:var(--fg);border:1px soli
 .m:first-of-type{border:0;margin:0;padding:0}
 pre{margin:0;white-space:pre-wrap;color:var(--dim);font-size:12px}
 .tag{color:var(--ok)}.bad{color:var(--hot)}.note{color:var(--warn);font-size:12px;margin-bottom:10px}
+.cap{color:var(--dim);font-size:11px;line-height:1.4;margin-top:8px}
 .g{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+
+/* --- 3d attitude view ------------------------------------------------ */
+.scene{height:186px;display:flex;align-items:center;justify-content:center;
+perspective:600px;margin:2px 0 8px;overflow:hidden}
+.rig{width:150px;height:150px;position:relative;transform-style:preserve-3d;
+transform:rotateX(62deg)}
+.grid{position:absolute;inset:-30px;border:1px solid var(--ln);transform:translateZ(-40px);
+background:
+repeating-linear-gradient(0deg,transparent 0 23px,rgba(125,137,152,.15) 23px 24px),
+repeating-linear-gradient(90deg,transparent 0 23px,rgba(125,137,152,.15) 23px 24px)}
+.drone{position:absolute;inset:0;transform-style:preserve-3d;
+transition:transform .08s linear}
+.boom{position:absolute;left:50%;top:50%;width:130px;height:6px;
+margin:-3px 0 0 -65px;background:#2f3a48;border:1px solid var(--ln);border-radius:3px}
+.boom.a{transform:rotate(45deg)}.boom.b{transform:rotate(-45deg)}
+.rot{position:absolute;width:42px;height:42px;margin:-21px 0 0 -21px;border-radius:50%;
+border:1.5px solid #55606f;background:rgba(85,96,111,.10)}
+.rot.f{border-color:var(--ok);background:rgba(79,208,138,.12)}
+.r1{left:calc(50% + 46px);top:calc(50% - 46px)}
+.r2{left:calc(50% - 46px);top:calc(50% - 46px)}
+.r3{left:calc(50% - 46px);top:calc(50% + 46px)}
+.r4{left:calc(50% + 46px);top:calc(50% + 46px)}
+.hub{position:absolute;left:50%;top:50%;width:36px;height:28px;margin:-14px 0 0 -18px;
+background:#394556;border:1px solid var(--ln);border-radius:5px}
+.nose{position:absolute;left:50%;top:calc(50% - 46px);margin-left:-6px;width:0;height:0;
+border-left:6px solid transparent;border-right:6px solid transparent;
+border-bottom:12px solid var(--ok)}
+.att{display:flex;gap:18px;justify-content:center;margin-bottom:10px;color:var(--dim)}
+.att b{color:var(--fg);font-variant-numeric:tabular-nums}
+
+/* --- raw / filtered table -------------------------------------------- */
+.t{width:100%;border-collapse:collapse;font-size:12px}
+.t th{color:var(--dim);font-weight:500;text-align:right;padding:0 0 5px;
+font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+.t th:first-child{text-align:left}
+.t td{padding:2px 0;text-align:right;font-variant-numeric:tabular-nums}
+.t td:first-child{text-align:left;color:var(--dim)}
+.t td.r{color:var(--dim)}
+.t tr.sep td{border-top:1px solid var(--ln);padding-top:6px}
 </style></head><body>
 <h1>LiteWing Bench</h1>
 <div class=note>Remove propellers before arming.</div>
@@ -244,11 +287,36 @@ pre{margin:0;white-space:pre-wrap;color:var(--dim);font-size:12px}
 <pre id=sw style=margin-top:8px></pre>
 </div>
 
+<div class=p><h2>Attitude</h2>
+<div class=scene><div class=rig>
+  <div class=grid></div>
+  <div class=drone id=drn>
+    <div class="boom a"></div><div class="boom b"></div>
+    <div class="rot f r1"></div><div class="rot f r2"></div>
+    <div class="rot r3"></div><div class="rot r4"></div>
+    <div class=hub></div><div class=nose></div>
+  </div>
+</div></div>
+<div class=att><span>roll <b id=abr>--</b></span><span>pitch <b id=abp>--</b></span></div>
+</div>
+
 <div class=p><h2>IMU</h2>
-<div class=row><span>accel g</span><b id=ac>--</b></div>
-<div class=row><span>gyro dps</span><b id=gy>--</b></div>
-<div class=row><span>roll / pitch</span><b id=rp>--</b></div>
-<div class=row><span>die temp</span><b id=tp>--</b></div>
+<table class=t>
+<tr><th>&nbsp;</th><th>raw</th><th>filtered</th></tr>
+<tr><td>accel x</td><td class=r id=rax>--</td><td id=fax>--</td></tr>
+<tr><td>accel y</td><td class=r id=ray>--</td><td id=fay>--</td></tr>
+<tr><td>accel z</td><td class=r id=raz>--</td><td id=faz>--</td></tr>
+<tr class=sep><td>gyro x</td><td class=r id=rgx>--</td><td id=fgx>--</td></tr>
+<tr><td>gyro y</td><td class=r id=rgy>--</td><td id=fgy>--</td></tr>
+<tr><td>gyro z</td><td class=r id=rgz>--</td><td id=fgz>--</td></tr>
+<tr class=sep><td>roll</td><td class=r id=rrl>--</td><td id=frl>--</td></tr>
+<tr><td>pitch</td><td class=r id=rpt>--</td><td id=fpt>--</td></tr>
+<tr class=sep><td>gyro bias</td><td class=r colspan=2 id=gbs>--</td></tr>
+<tr><td>die temp</td><td class=r colspan=2 id=tp>--</td></tr>
+</table>
+<div class=cap>raw accel/gyro are LSB counts; raw
+roll/pitch are accelerometer-only. filtered = scaled, bias-corrected,
+complementary.</div>
 <button style=margin-top:8px onclick=calib()>Calibrate gyro bias</button>
 </div>
 
@@ -264,6 +332,7 @@ pre{margin:0;white-space:pre-wrap;color:var(--dim);font-size:12px}
 
 <script>
 let armed=false;
+const SGN={r:1,p:-1};   // attitude sign convention, see docs/UI.md
 const mots=document.getElementById('mots');
 for(let i=0;i<4;i++){mots.insertAdjacentHTML('beforeend',
 `<div class=m><div class=row><span>M${i+1}</span><b id=d${i}>0%</b></div>
@@ -277,7 +346,7 @@ setTimeout(()=>{document.getElementById('s'+i).value=0;setM(i,0)},1000)}
 function toggleArm(){armed=!armed;j('/api/arm?v='+(armed?1:0))}
 function stop(){armed=false;for(let i=0;i<4;i++){document.getElementById('s'+i).value=0;
 document.getElementById('d'+i).textContent='0%'}j('/api/stop')}
-function calib(){document.getElementById('rp').textContent='calibrating...';j('/api/calib')}
+function calib(){document.getElementById('gbs').textContent='calibrating...';j('/api/calib')}
 async function sweep(){document.getElementById('sw').textContent='running...';
 const r=await j('/api/sweep');document.getElementById('sw').textContent=r?r.log:'failed'}
 async function scan(){const r=await j('/api/scan');if(!r){document.getElementById('sc').textContent='scan failed';return}
@@ -300,10 +369,20 @@ vb.textContent=s.vbat.toFixed(2)+' V';
 io.innerHTML=s.imu?'<span class=tag>online</span>':'<span class=bad>no response</span>';
 ar.innerHTML=s.armed?'<span class=bad>ARMED</span>':'<span class=tag>safe</span>';
 armed=s.armed;armb.textContent=s.armed?'DISARM':'ARM';armb.className=s.armed?'arm on':'arm';
-ac.textContent=s.a.map(v=>v.toFixed(2)).join('  ');
-gy.textContent=s.g.map(v=>v.toFixed(1)).join('  ');
-rp.textContent=s.roll.toFixed(1)+'  /  '+s.pitch.toFixed(1);
-tp.textContent=s.temp.toFixed(1)+' C'}
+const R=['rax','ray','raz'],F=['fax','fay','faz'];
+for(let i=0;i<3;i++){document.getElementById(R[i]).textContent=s.ar[i];
+document.getElementById(F[i]).textContent=s.a[i].toFixed(3)+' g'}
+const RG=['rgx','rgy','rgz'],FG=['fgx','fgy','fgz'];
+for(let i=0;i<3;i++){document.getElementById(RG[i]).textContent=s.gr[i];
+document.getElementById(FG[i]).textContent=s.g[i].toFixed(2)+String.fromCharCode(176)+'/s'}
+const D=String.fromCharCode(176);
+rrl.textContent=s.aroll.toFixed(1)+D; frl.textContent=s.roll.toFixed(1)+D;
+rpt.textContent=s.apitch.toFixed(1)+D; fpt.textContent=s.pitch.toFixed(1)+D;
+gbs.textContent=s.bias.map(v=>v.toFixed(2)).join('  ')+' '+D+'/s';
+tp.textContent=s.temp.toFixed(1)+' C';
+abr.textContent=s.roll.toFixed(1)+D; abp.textContent=s.pitch.toFixed(1)+D;
+// SGN: flip a sign here if the model tilts the wrong way for your board
+drn.style.transform='rotateY('+(SGN.r*s.roll)+'deg) rotateX('+(SGN.p*s.pitch)+'deg)'}
 loadPins();setInterval(tick,120);tick();
 </script></body></html>)HTML";
 
@@ -317,7 +396,11 @@ static void hState() {
   j += ",\"armed\":" + String(armed?"true":"false");
   j += ",\"a\":[" + String(axg,3) + "," + String(ayg,3) + "," + String(azg,3) + "]";
   j += ",\"g\":[" + String(gx/16.4f-gBias[0],2) + "," + String(gy/16.4f-gBias[1],2) + "," + String(gz/16.4f-gBias[2],2) + "]";
+  j += ",\"ar\":[" + String(ax) + "," + String(ay) + "," + String(az) + "]";
+  j += ",\"gr\":[" + String(gx) + "," + String(gy) + "," + String(gz) + "]";
+  j += ",\"bias\":[" + String(gBias[0],2) + "," + String(gBias[1],2) + "," + String(gBias[2],2) + "]";
   j += ",\"roll\":" + String(roll,2) + ",\"pitch\":" + String(pitch,2);
+  j += ",\"aroll\":" + String(aRoll,2) + ",\"apitch\":" + String(aPitch,2);
   j += ",\"temp\":" + String(traw/340.0f+36.53f,1);
   j += "}";
   server.send(200, "application/json", j);

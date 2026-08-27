@@ -30,7 +30,20 @@ need them.
 |    ... M2, M3, M4 ...                |
 |    [ Stop all ]  [ Health sweep ]    |
 +--------------------------------------+
-|  IMU / SENSORS / PINS                |
+|  ATTITUDE                            |
+|            ___   /\   ___            |
+|           (   )--\/--(   )           |
+|              \   ||   /              |
+|            ___\  ||  /___            |
+|           (   )--/\--(   )           |
+|         roll 2.10  pitch -0.4o       |
++--------------------------------------+
+|  IMU            RAW      FILTERED    |
+|    accel x      -132     -0.03 g     |
+|    gyro x        -18     -0.02 o/s   |
+|    roll        -1.8o      -1.7o      |
++--------------------------------------+
+|  SENSORS / PINS                      |
 +--------------------------------------+
 ```
 
@@ -115,27 +128,77 @@ Re-sweep on a fresh pack before condemning a motor.
 
 ---
 
+## Attitude
+
+A live 3D model of the airframe on a fixed ground grid, driven by the
+complementary-filter roll and pitch. The grid stays level and the drone rotates
+against it, so any tilt reads instantly without parsing numbers.
+
+The model is an X-quad seen from above and behind. **Front rotors are green,
+rear rotors grey, and a green nose triangle marks forward** — so you can tell
+which way it is pointing at any attitude. Large roll and pitch figures sit
+underneath.
+
+It is built entirely from CSS 3D transforms — no WebGL, no library, no external
+request. That is a requirement, not a preference: the page is served from the
+drone's own access point with no route to the internet.
+
+**Yaw is not shown, because it is not measured.** The magnetometer is never
+fused, so the model's heading is fixed. Only roll and pitch move.
+
+### If the model tilts the wrong way
+
+Whether positive roll means "right side down" depends on how the MPU6050 sits
+on your board, which the firmware cannot know. If the model leans opposite to
+the real drone, flip the relevant sign in the sketch — one line, near the top
+of the `<script>` block:
+
+```js
+const SGN={r:1,p:-1};   // r = roll, p = pitch
+```
+
+Set `r:-1` to invert roll, `p:1` to invert pitch. The numeric readouts are
+unaffected; this only changes the visual.
+
+---
+
 ## IMU
 
-Live telemetry from the MPU6050, repainting at the 120 ms poll rate.
+Every value in two columns, **raw** and **filtered**, repainting at the 120 ms
+poll rate.
 
-- **accel g** — X, Y, Z in g. At rest on a flat surface, expect roughly
-  `0.00  0.00  1.00`. A missing 1 g on Z means the board is not flat or the
-  sensor is not oriented as assumed.
-- **gyro dps** — X, Y, Z in degrees per second, bias-corrected. At rest these
-  should sit near zero; persistent non-zero values mean the bias calibration is
-  stale.
-- **roll / pitch** — complementary-filter attitude in degrees. Tilt the drone
-  and confirm the numbers track the physical motion in the right sense. There
-  is no yaw estimate.
-- **die temp** — MPU6050 die temperature in Celsius.
+| Row | Raw column | Filtered column |
+|---|---|---|
+| accel x/y/z | LSB counts, 4096 LSB/g | scaled to **g** |
+| gyro x/y/z | LSB counts, 16.4 LSB/dps, bias still in | **dps**, bias subtracted |
+| roll | **accelerometer-only**, unfiltered | complementary-filtered |
+| pitch | **accelerometer-only**, unfiltered | complementary-filtered |
+
+Below those: the gyro bias currently being subtracted, and MPU6050 die
+temperature.
+
+Two columns rather than one because the comparison is the diagnostic:
+
+- **Raw counts near zero on all three accel axes** — the sensor is answering
+  but returning nothing. Bus problem, not a scaling problem.
+- **Raw accel z near 4096 at rest, filtered z near 1.00 g** — scaling is
+  correct. If raw looks right but filtered does not, the full-scale constant is
+  wrong.
+- **Raw gyro far from zero at rest, filtered near zero** — normal. That gap is
+  exactly the bias being removed, and it should match the gyro bias row.
+- **Raw gyro near zero but filtered far off** — stale calibration. Recalibrate.
+- **Raw roll/pitch jittery, filtered smooth** — the complementary filter
+  working as intended.
+- **Both roll columns drifting apart steadily** — gyro bias has drifted since
+  calibration, usually thermal. Recalibrate.
+
+At rest on a flat surface, expect accel roughly `0.00 / 0.00 / 1.00` g, gyro
+near zero, and all four angle figures near zero.
 
 **Calibrate gyro bias** disarms, then averages 400 samples to establish zero
 rates and resets the attitude accumulators. Keep the drone completely still and
 flat for it — about 1.2 seconds. Calibrating while it moves bakes the motion in
 as permanent bias. This also runs automatically at boot.
-
----
 
 ## Sensors
 

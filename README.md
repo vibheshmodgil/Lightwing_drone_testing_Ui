@@ -19,7 +19,8 @@ Point a phone at it, and the drone tells you what's broken.
 |---|---|
 | **Status** | Live battery voltage, IMU reachability, arm state |
 | **Motors** | Per-motor PWM slider, timed pulses, master arm, health sweep |
-| **IMU** | Raw accel/gyro, complementary-filter attitude, gyro bias calibration |
+| **Attitude** | Live 3D airframe model on a level grid — pure CSS, no libraries |
+| **IMU** | Raw *and* filtered accel/gyro/angles side by side, gyro bias calibration |
 | **Sensors** | I2C bus scan on both buses + SPI flow sensor identification |
 | **Pins** | Edit every GPIO assignment from the browser, persisted to NVS |
 
