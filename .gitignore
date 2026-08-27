@@ -1,0 +1,13 @@
+# Arduino / PlatformIO build output
+build/
+.pio/
+.pioenvs/
+*.bin
+*.elf
+*.map
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
