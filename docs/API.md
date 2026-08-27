@@ -61,6 +61,10 @@ interval, or your motors will cut out mid-test.
 | `aroll` | float | **accelerometer-only** roll, unfiltered, degrees |
 | `apitch` | float | **accelerometer-only** pitch, unfiltered, degrees |
 | `temp` | float | MPU6050 die temperature, Celsius |
+| `duty` | int[4] | **live** duty per motor, 0-100, as the device has it |
+| `sweep` | bool | a health sweep is currently running |
+| `swm` | int | motor the sweep is on (1-4), 0 when idle |
+| `t` | int | device uptime in ms, from `millis()` |
 
 Comparing the raw and filtered pairs is the point: `ar`/`gr` against `a`/`g`
 shows whether scaling is sane, and `aroll`/`apitch` against `roll`/`pitch`
@@ -127,19 +131,39 @@ duration, or the motion is baked in as permanent bias.
 
 ## `GET /api/sweep`
 
-Run the motor health sweep: each motor alone at 30%, 50% and 70% for 700 ms,
+Start the motor health sweep: each motor alone at 30%, 50% and 70% for 700 ms,
 recording battery sag against a resting voltage captured at the start.
 
-**Blocks for roughly 10 seconds, and arms motors without further
-confirmation.** Props off. The server serves nothing else until it returns, and
-HTTP clients with a default timeout under ~10 s will give up before the
-response arrives — the sweep still completes on the device.
+**Returns immediately.** The sweep runs as a state machine driven from
+`loop()`, so the server keeps answering while it works — that is what lets the
+browser log battery voltage across the whole sweep. Poll `/api/state` and watch
+`sweep` and `swm` for progress.
 
-The watchdog is suspended for the duration, since the sweep holds motors on
+**Arms motors without further confirmation.** Props off.
+
+The comms watchdog is suspended while the sweep runs, since it holds motors on
 deliberately. All motors are stopped and disarmed when it finishes.
 
+```
+{"ok":true}
+```
+
+Calling it while a sweep is already running is a no-op.
+
+---
+
+## `GET /api/sweeplog`
+
+Read the sweep result. Safe to call at any time; while a sweep is running it
+returns the partial log built so far.
+
 ```json
-{"log":"rest 3.94V\nM1 30%:0.041V  50%:0.088V  70%:0.143V\n..."}
+{
+  "running": false,
+  "log": "rest 3.94V
+M1 30%:0.041V  50%:0.088V  70%:0.143V
+..."
+}
 ```
 
 Interpretation is covered in [UI.md](UI.md#reading-a-health-sweep).

@@ -119,29 +119,37 @@ voltage while that motor ran alone at that level.
 - **Falling sag as duty rises**: not physical. Suspect a loose battery
   connector browning out under load, or thermal cut-back.
 
-Two caveats. The sweep **blocks the web server for about 10 seconds** and the
-UI freezes while it runs — if `fetch` times out in the browser, the sweep still
-completed on the device. And the resting voltage is captured once at the start,
-so on a pack that is already sagging from a long session, later motors will
-read slightly higher sag than earlier ones purely from cumulative drain.
-Re-sweep on a fresh pack before condemning a motor.
+The sweep runs as a state machine on the device, so the UI stays live
+throughout — the motor sliders track its progress and the session log captures
+the whole thing. For per-level sag rather than this summary, read the **load
+segments** table, which breaks the sweep into one row per motor per level.
+
+One caveat: the resting voltage is captured once at the start, so on a pack
+already sagging from a long session, later motors read slightly higher sag than
+earlier ones purely from cumulative drain. Re-sweep on a fresh pack before
+condemning a motor.
 
 ---
 
 ## Attitude
 
-A live 3D model of the airframe on a fixed ground grid, driven by the
-complementary-filter roll and pitch. The grid stays level and the drone rotates
-against it, so any tilt reads instantly without parsing numbers.
+A 3D model of the airframe on a fixed ground grid, driven by the
+complementary-filter roll and pitch. The grid and its shadow stay level and the
+drone banks against them, so tilt reads instantly without parsing numbers.
 
-The model is an X-quad seen from above and behind. **Front rotors are green,
-rear rotors grey, and a green nose triangle marks forward** — so you can tell
-which way it is pointing at any attitude. Large roll and pitch figures sit
-underneath.
+The model is a real X-quad: a shaded body box, booms with visible sides, motor
+pods, and **propellers that actually spin at a rate set by each motor's live
+duty cycle** — read from the device, not from the sliders, so a sweep or a
+watchdog cut shows up here too. A translucent disc fades in over a spinning
+rotor as duty rises. The status LED on the body turns red when armed.
 
-It is built entirely from CSS 3D transforms — no WebGL, no library, no external
-request. That is a requirement, not a preference: the page is served from the
-drone's own access point with no route to the internet.
+Motion is interpolated with `requestAnimationFrame` between polls rather than
+snapping at the poll rate, which is what makes it read as smooth at ~8 Hz of
+actual data.
+
+All of it is CSS 3D transforms — no WebGL, no library, no external request.
+That is a requirement, not a preference: the page is served from the drone's own
+access point with no route to the internet.
 
 **Yaw is not shown, because it is not measured.** The magnetometer is never
 fused, so the model's heading is fixed. Only roll and pitch move.
@@ -159,6 +167,94 @@ const SGN={r:1,p:-1};   // r = roll, p = pitch
 
 Set `r:-1` to invert roll, `p:1` to invert pitch. The numeric readouts are
 unaffected; this only changes the visual.
+
+---
+
+## Session log
+
+Records everything the bench sees while you work, plots it live, and exports it
+as CSV. This is where the engineering happens — the panels above tell you what
+is true *now*, the session log tells you what happened *over time*.
+
+**Recording happens in the browser, not on the drone.** The page already polls
+`/api/state` several times a second; the log just keeps every sample instead of
+discarding it. That costs the ESP32 nothing and gives you effectively unlimited
+history. The trade is that **closing the tab loses the log** — export before
+you close. The buffer caps at 36,000 samples (over an hour) and stops recording
+rather than growing without bound.
+
+### Controls
+
+- **RECORD** — starts and stops. Turns red while recording. Timestamps are
+  relative to the first sample.
+- **Clear** — discards everything and resets the clock.
+- **Export CSV** — writes three files (see below).
+- **30 s / 2 min / All** — the time window the charts show. Recording is
+  unaffected; this is only the view.
+
+### Charts
+
+Four stacked plots on a shared time axis, drawn on `<canvas>`:
+
+| Chart | Series |
+|---|---|
+| **battery volts** | pack voltage, autoscaled |
+| **motor duty %** | all four motors, fixed 0–100 |
+| **attitude deg** | roll and pitch |
+| **gyro dps** | gyro X/Y/Z |
+
+Vertical amber lines are **event markers** — arm, disarm, stop, each pulse,
+sweep start and end, calibration. They are what let you line a voltage drop up
+against the thing that caused it.
+
+Hovering any chart drops a crosshair and the value readouts at the right of
+each title switch to the values at that instant, across all four charts at
+once. Move the mouse away and they return to live.
+
+Long sessions are decimated to roughly 900 points per line for drawing, so
+redraw cost stays flat whether you have 500 samples or 36,000. The CSV export
+is never decimated.
+
+### Load segments
+
+The table under the charts is the direct answer to "how much does the battery
+drop for each test".
+
+A **segment** is any period of constant motor output. Every time the duty
+vector changes — you move a slider, a pulse fires, the sweep steps to its next
+level — the current segment closes and a new one opens. Each row records:
+
+| Column | Meaning |
+|---|---|
+| `t` | when the segment started, mm:ss.s |
+| `output` | which motors at what duty, e.g. `M2 50%` |
+| `dur` | how long it held |
+| `V rest` | resting voltage from the idle period immediately before |
+| `V min` | lowest voltage seen during the segment |
+| `sag` | `V rest - V min` |
+
+Sag is coloured green when meaningful and **red when under 5 mV**, which is the
+signature of a motor drawing no current — a dead winding, a blown IRLML6344, a
+broken joint, or a wrong pin. Compare motors against each other rather than
+against a fixed threshold; the absolute numbers depend on your pack and its
+state of charge.
+
+Because a health sweep steps through 30/50/70% per motor, it produces twelve
+segments — one per level per motor — so you get per-level sag rather than the
+single summary line the sweep log prints.
+
+### CSV export
+
+Three files, so each is a clean table:
+
+- **`litewing_samples.csv`** — every sample: `t_s, vbat_v, m1..m4_pct, armed,
+  roll_deg, pitch_deg, gx/gy/gz_dps, ax/ay/az_g, temp_c`
+- **`litewing_segments.csv`** — the segment table, including `v_rest`, `v_min`
+  and `sag_v`
+- **`litewing_events.csv`** — timestamped event markers
+
+All three share the same `t_s` time base, so they join cleanly in a spreadsheet,
+pandas, or whatever you analyse in.
 
 ---
 

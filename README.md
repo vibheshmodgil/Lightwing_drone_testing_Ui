@@ -19,7 +19,8 @@ Point a phone at it, and the drone tells you what's broken.
 |---|---|
 | **Status** | Live battery voltage, IMU reachability, arm state |
 | **Motors** | Per-motor PWM slider, timed pulses, master arm, health sweep |
-| **Attitude** | Live 3D airframe model on a level grid — pure CSS, no libraries |
+| **Attitude** | Live 3D airframe on a level grid, props spinning at real duty — pure CSS |
+| **Session log** | Records every sample, plots 4 live charts, per-test battery sag, CSV export |
 | **IMU** | Raw *and* filtered accel/gyro/angles side by side, gyro bias calibration |
 | **Sensors** | I2C bus scan on both buses + SPI flow sensor identification |
 | **Pins** | Edit every GPIO assignment from the browser, persisted to NVS |
@@ -109,11 +110,9 @@ Upload** enabled.
 this is a non-issue. On 2.x the writes land on unattached channels and no motor
 will ever spin.
 
-**The health sweep blocks the web server.** `healthSweep()` runs inline for
-roughly 10 seconds (4 motors x 3 levels x 700 ms, plus settling) without
-servicing `server.handleClient()`. The UI freezes for the duration and the
-`fetch` may time out in the browser even though the sweep completes and logs
-correctly on the device. Wait it out and re-read the panel.
+**The session log lives in the browser, not the drone.** Closing the tab
+discards it. Export to CSV before you close. It caps at 36,000 samples (over an
+hour) and then stops recording rather than growing without bound.
 
 **The buzzer is mapped but unused.** `BUZZER` is defined as GPIO 39 and never
 driven. There is no audible arm warning — a deliberate omission worth knowing
