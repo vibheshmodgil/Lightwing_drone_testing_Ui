@@ -21,6 +21,9 @@ Point a phone at it, and the drone tells you what's broken.
 | **Motors** | Per-motor PWM slider, timed pulses, master arm, health sweep |
 | **Attitude** | Live 3D airframe on a level grid, props spinning at real duty — pure CSS |
 | **Session log** | Records every sample, plots 4 live charts, per-test battery sag, CSV export |
+
+The `/pid` page adds closed-loop roll/pitch stabilisation with live gain
+controls, P/I/D term traces, step-response metrics and CSV export.
 | **IMU** | Raw *and* filtered accel/gyro/angles side by side, gyro bias calibration |
 | **Sensors** | I2C bus scan on both buses + SPI flow sensor identification |
 | **Pins** | Edit every GPIO assignment from the browser, persisted to NVS |
@@ -65,6 +68,21 @@ auto-reset transistors populated.
 
 ---
 
+## Two pages
+
+| URL | What it is |
+|---|---|
+| `http://192.168.4.1/` | **Bench** — sensors, motors, health sweep, attitude, session log |
+| `http://192.168.4.1/pid` | **PID stabiliser** — closed-loop roll/pitch tuning on a gimbal |
+
+The PID page closes a feedback loop from the IMU onto the motors so you can
+tune gains on a two-axis stand. It has its own safety rules — see
+[docs/PID.md](docs/PID.md) before starting the loop. The two are interlocked:
+starting the stabiliser stops a sweep, and touching a motor slider on the bench
+page drops the loop.
+
+---
+
 ## Documentation
 
 - **[docs/HARDWARE.md](docs/HARDWARE.md)** — pin map, sensor addresses, motor
@@ -73,6 +91,8 @@ auto-reset transistors populated.
   interpret a health sweep
 - **[docs/API.md](docs/API.md)** — the HTTP endpoints, for scripting the rig
   from `curl` or Python instead of the browser
+- **[docs/PID.md](docs/PID.md)** — the stabiliser: control law, mixer, tuning
+  procedure, how to read a step response, and its API
 
 ---
 
@@ -89,6 +109,10 @@ This firmware will spin motors on a web request. Treat it accordingly.
 - **The AP is not a security boundary.** WPA2 with a hardcoded password that is
   published in this README. Anyone in range who joins can arm the motors. Don't
   leave it powered and unattended with props on.
+- **The stabiliser is the sharp end.** `/pid` drives motors from IMU feedback.
+  A wrong gain oscillates the frame hard, and a wrong sign runs it to the stop.
+  Mount it in a gimbal, keep a hand near STOP, and read
+  [docs/PID.md](docs/PID.md) first.
 - **Flashing this erases the stock firmware.** The Crazyflie / ESP-Drone image
   is gone until you restore it with the CircuitDigest web flasher.
 

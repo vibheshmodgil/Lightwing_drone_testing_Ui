@@ -3,6 +3,9 @@
 Base URL **`http://192.168.4.1`** once you have joined the `LiteWing-Bench`
 access point.
 
+The stabiliser endpoints (`/api/pid`, `/api/pidset`, `/api/pidstate`,
+`/api/pidsave`) are documented separately in [PID.md](PID.md).
+
 Every endpoint is a plain `GET` with query-string parameters and a JSON
 response — deliberately, so the whole rig is drivable from `curl` without a
 browser. There is no authentication: anyone on the AP can arm the motors.
@@ -65,6 +68,8 @@ interval, or your motors will cut out mid-test.
 | `sweep` | bool | a health sweep is currently running |
 | `swm` | int | motor the sweep is on (1-4), 0 when idle |
 | `t` | int | device uptime in ms, from `millis()` |
+
+Note that `/api/motor` and `/api/stop` both stop the PID stabiliser if it is running — manual motor control always takes precedence over the loop.
 
 Comparing the raw and filtered pairs is the point: `ar`/`gr` against `a`/`g`
 shows whether scaling is sane, and `aroll`/`apitch` against `roll`/`pitch`
