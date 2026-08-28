@@ -196,6 +196,11 @@ Set any subset. Only the parameters present are changed.
 | `olim` | 0–50 | per-axis authority clamp, output % |
 | `inv0` `inv1` | 0/1 | invert correction sign per axis |
 | `sp0` `sp1` | ±30 | setpoint, degrees |
+| `flight` | 0/1 | 0 bench, 1 flight. Switching always stops the loop |
+| `yawkp` | 0–2 | yaw rate damper gain |
+| `yawlim` | 0–30 | yaw authority clamp, output % |
+| `tilt` | 20–89 | tilt cutoff angle, degrees |
+| `clearf` | any | clear a latched fault code |
 | `reseti` | any | zero both integrators |
 | `run` | 0/1 | stop or start the loop |
 
@@ -209,8 +214,13 @@ Fast telemetry for the tuning plots. Touches the comms watchdog.
 {"run":true,"armed":true,"ang":[0.4,-0.2],"sp":[0,0],
  "p":[0.24,0],"i":[0,0],"d":[-0.03,0],"o":[0.21,0],
  "rate":[1.1,-0.4],"duty":[15,19,15,19],
+ "yaw":0.0,"yrate":-0.4,"thr":15.0,"thrt":15,"flight":1,"fault":0,
  "vbat":3.86,"imu":true,"hz":312,"t":91240}
 ```
+
+`thr` is the slew-limited throttle actually applied, `thrt` the commanded
+target. `fault` is 0 none, 1 tilt cutoff, 2 IMU lost — it latches until the
+loop is restarted or `clearf` is sent.
 
 `hz` is the measured PID loop rate, from the last `dt`. If it drops well below
 ~100 Hz the derivative term gets coarse — check what else is loading the ESP32.

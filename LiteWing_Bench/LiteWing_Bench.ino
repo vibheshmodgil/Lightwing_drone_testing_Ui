@@ -75,6 +75,13 @@ struct PidCfg {
   float iLim    = 15.0f;      // integral clamp, output %
   float oLim    = 30.0f;      // per-axis authority clamp, output %
   int   inv[2]  = { 0, 0 };   // flip correction sign per axis
+  // --- flight / hover ---
+  int   flight  = 0;          // 0 bench (gimbal), 1 flight (free hover)
+  float yawKp   = 0.25f;      // yaw RATE damper. resists spin, does not hold heading
+  float yawLim  = 12.0f;      // yaw authority clamp, output %
+  float tiltCut = 60.0f;      // disarm above this |angle|, degrees
+  int   thrMin  = 12;         // below this throttle, hold integrators at zero
+  float slew    = 45.0f;      // throttle ramp limit, % per second
 } pid;
 
 Preferences prefs;
@@ -101,6 +108,10 @@ float    pidSp[2]  = {0,0};                       // setpoints, degrees
 float    pTerm[2]={0,0}, iTerm[2]={0,0}, dTerm[2]={0,0}, pidOut[2]={0,0};
 uint32_t lastPid = 0;
 float    pidDt = 0;
+float    yawOut = 0;            // yaw rate damper output, %
+float    baseNow = 0;           // slew-limited throttle actually applied
+int      baseTgt = 0;           // throttle the UI asked for
+int      pidFault = 0;          // 0 none, 1 tilt cutoff, 2 IMU lost
 static void pidStop();          // used by the sweep and manual-motor paths below
 
 // ---------------------------------------------------------------- pwm ------
@@ -281,11 +292,19 @@ static void sweepTick() {
 static void pidStop() {
   pidRun = false;
   for (int a = 0; a < 2; a++) { pTerm[a]=iTerm[a]=dTerm[a]=pidOut[a]=0; }
+  yawOut = 0;
+  baseNow = 0; baseTgt = 0; pid.base = 0;
   allStop();
 }
 static void pidStart() {
   if (sweepRunning) return;
   for (int a = 0; a < 2; a++) iTerm[a] = 0;   // never inherit stale windup
+  yawOut = 0;
+  pidFault = 0;
+  // Flight always starts at zero throttle and must be raised deliberately.
+  // Bench ramps up to whatever base throttle was dialled in.
+  baseTgt = pid.flight ? 0 : pid.base;
+  baseNow = 0;
   lastPid = micros();
   pidRun = true;
   armed = true;
@@ -299,8 +318,24 @@ static void pidTick() {
   if (dt <= 0 || dt > 0.1f) return;       // first pass, or we stalled
   pidDt = dt;
 
+  // ---- failsafes, before anything drives a motor --------------------------
+  if (!imuOk) { pidFault = 2; pidStop(); return; }
+  if (pid.flight &&
+      (fabsf(roll) > pid.tiltCut || fabsf(pitch) > pid.tiltCut)) {
+    pidFault = 1; pidStop(); return;      // flipped or crashed
+  }
+
+  // ---- throttle slew: a step from 0 to hover is violent -------------------
+  float lim = pid.slew * dt;
+  if      (baseNow < baseTgt) baseNow = min((float)baseTgt, baseNow + lim);
+  else if (baseNow > baseTgt) baseNow = max((float)baseTgt, baseNow - lim);
+
   const float ang[2]  = { roll, pitch };
   const float rate[2] = { gx/16.4f - gBias[0], gy/16.4f - gBias[1] };
+
+  // Sitting on the ground the error is constant and the integrator would wind
+  // up, so the drone would leap sideways the instant it left the floor.
+  bool grounded = pid.flight && baseNow < pid.thrMin;
 
   for (int a = 0; a < 2; a++) {
     bool active = (pid.mode == 3) || (pid.mode == 1 && a == 0) || (pid.mode == 2 && a == 1);
@@ -308,23 +343,38 @@ static void pidTick() {
 
     float e = pidSp[a] - ang[a];
     pTerm[a] = pid.kp[a] * e;
-    iTerm[a] += pid.ki[a] * e * dt;
-    iTerm[a] = constrain(iTerm[a], -pid.iLim, pid.iLim);
+    if (grounded) {
+      iTerm[a] = 0;
+    } else {
+      iTerm[a] += pid.ki[a] * e * dt;
+      iTerm[a] = constrain(iTerm[a], -pid.iLim, pid.iLim);
+    }
     dTerm[a] = -pid.kd[a] * rate[a];
     pidOut[a] = constrain(pTerm[a] + iTerm[a] + dTerm[a], -pid.oLim, pid.oLim);
   }
 
-  // X-quad mix. M1 front-right, M2 back-left, M3 back-right, M4 front-left,
-  // matching the MOT_1..MOT_4 order in the pin map.
+  // Yaw is a RATE DAMPER, not a heading hold. It resists spin; it will not
+  // return to a heading, because nothing fuses the magnetometer.
+  if (pid.flight && !grounded) {
+    float yr = gz/16.4f - gBias[2];
+    yawOut = constrain(-pid.yawKp * yr, -pid.yawLim, pid.yawLim);
+  } else {
+    yawOut = 0;
+  }
+
+  // X-quad mix. M1 front-right, M2 back-left, M3 back-right, M4 front-left.
+  // Yaw acts on the diagonals: M1/M2 share one rotation, M3/M4 the other.
   float r = pid.inv[0] ? -pidOut[0] : pidOut[0];
   float q = pid.inv[1] ? -pidOut[1] : pidOut[1];
-  float b = pid.base;
-  duty[0] = constrain((int)lroundf(b - r - q), 0, 100);
-  duty[1] = constrain((int)lroundf(b + r + q), 0, 100);
-  duty[2] = constrain((int)lroundf(b - r + q), 0, 100);
-  duty[3] = constrain((int)lroundf(b + r - q), 0, 100);
+  float y = yawOut;
+  float b = baseNow;
+  duty[0] = constrain((int)lroundf(b - r - q - y), 0, 100);
+  duty[1] = constrain((int)lroundf(b + r + q - y), 0, 100);
+  duty[2] = constrain((int)lroundf(b - r + q + y), 0, 100);
+  duty[3] = constrain((int)lroundf(b + r - q + y), 0, 100);
   applyMotors();
 }
+
 static void pidLoad() {
   prefs.begin("bench", true);
   pid.kp[0]=prefs.getFloat("pkp0",pid.kp[0]); pid.kp[1]=prefs.getFloat("pkp1",pid.kp[1]);
@@ -334,6 +384,9 @@ static void pidLoad() {
   pid.oLim  = prefs.getFloat("pol", pid.oLim);
   pid.inv[0]= prefs.getInt("piv0", pid.inv[0]);
   pid.inv[1]= prefs.getInt("piv1", pid.inv[1]);
+  pid.yawKp = prefs.getFloat("pykp", pid.yawKp);
+  pid.yawLim= prefs.getFloat("pyl",  pid.yawLim);
+  pid.tiltCut=prefs.getFloat("ptc",  pid.tiltCut);
   prefs.end();
 }
 static void pidSave() {
@@ -343,6 +396,8 @@ static void pidSave() {
   prefs.putFloat("pkd0",pid.kd[0]); prefs.putFloat("pkd1",pid.kd[1]);
   prefs.putFloat("pil", pid.iLim);  prefs.putFloat("pol", pid.oLim);
   prefs.putInt("piv0", pid.inv[0]); prefs.putInt("piv1", pid.inv[1]);
+  prefs.putFloat("pykp", pid.yawKp); prefs.putFloat("pyl", pid.yawLim);
+  prefs.putFloat("ptc", pid.tiltCut);
   prefs.end();
 }
 
@@ -950,21 +1005,57 @@ border-bottom:1px solid var(--ln);font-size:10px;letter-spacing:.08em;text-trans
 .st b{float:right;color:var(--fg);font-variant-numeric:tabular-nums}
 .warn{background:#2a1e1a;border:1px solid #5a3630;color:var(--warn);
 padding:8px;font-size:11px;line-height:1.45;margin-bottom:10px}
+.warn.fly{background:#2e1a18;border-color:#7a3a30;color:#f0a08f}
+.thr{width:100%;height:34px;accent-color:var(--hot)}
+.big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;text-align:center;
+padding:4px 0 2px}
+.fault{background:#3a1c18;border:1px solid var(--hot);color:var(--hot);padding:7px;
+font-size:12px;margin-bottom:8px;display:none}
+.fault.on{display:block}
+textarea{width:100%;height:150px;background:#0e1116;color:var(--dim);border:1px solid var(--ln);
+font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;padding:7px;resize:vertical}
 </style></head><body>
 <h1><span>LiteWing PID</span><a href="/">&larr; bench</a></h1>
 
-<div class=warn><b>Propellers off. Gimbal mounted.</b> This closes a feedback
+<div class=warn id=banner><b>Propellers off. Gimbal mounted.</b> This closes a feedback
 loop from the IMU onto the motors. A wrong gain oscillates the frame hard and
 an unrestrained airframe will flip itself off the bench. Mount it in a two-axis
 gimbal that lets it rotate but not translate, and keep a hand near STOP.</div>
 
+<div class=p><h2>Mode</h2>
+<div class=g>
+<button id=fm0 onclick=setFlight(0)>Bench / gimbal</button>
+<button id=fm1 onclick=setFlight(1)>Flight / hover</button>
+</div>
+<div class=cap>Flight mode raises the throttle ceiling to 90%, enables the yaw
+rate damper, holds the integrators down until throttle passes the takeoff
+threshold, and arms the tilt cutoff. Switching modes always stops the loop.</div>
+</div>
+
 <div class=p>
+<div class=fault id=fault></div>
 <button class=stopb onclick=estop()>STOP</button>
 <button class=runb id=runb onclick=toggleRun()>START LOOP</button>
 <div class=st style=margin-top:10px>
 <span>loop <b id=stRun>--</b></span><span>rate <b id=stHz>--</b></span>
 <span>IMU <b id=stImu>--</b></span><span>battery <b id=stV>--</b></span>
+<span>yaw rate <b id=stYaw>--</b></span><span>tilt <b id=stTilt>--</b></span>
 </div>
+</div>
+
+<div class=p id=thrPanel style=display:none><h2>Throttle</h2>
+<div class=big id=thrBig>0%</div>
+<input type=range min=0 max=90 value=0 id=thrR class=thr oninput=setThr(this.value)>
+<div class=row style=margin-top:4px><span>commanded</span><b id=thrCmd>0%</b></div>
+<div class=row><span>applied (ramped)</span><b id=thrNow>0.0%</b></div>
+<div class=g3 style=margin-top:8px>
+<button onclick=thrStep(-5)>&minus;5%</button>
+<button onclick=thrStep(5)>+5%</button>
+<button onclick=setThr(0)>Idle</button>
+</div>
+<div class=cap>Throttle ramps at 45%/s rather than stepping, so the frame does
+not jump. Hover on a charged pack is usually 40&ndash;55%. Raise in small
+increments until it gets light on the bench, then commit.</div>
 </div>
 
 <div class=p><h2>Axis</h2>
@@ -978,7 +1069,7 @@ gimbal that lets it rotate but not translate, and keep a hand near STOP.</div>
 stable, then repeat for pitch. Both together only once each is settled.</div>
 </div>
 
-<div class=p><h2>Base throttle</h2>
+<div class=p id=basePanel><h2>Base throttle</h2>
 <div class=row><span>all four motors</span><b id=baseV>0%</b></div>
 <input type=range min=0 max=60 value=0 id=baseR oninput=setBase(this.value)>
 <div class=cap>The stabiliser trims around this. At 0% it can only ever
@@ -1007,6 +1098,13 @@ typically 12&ndash;20%, then tune.</div>
 <div class=g style=margin-top:6px>
 <button onclick=resetI()>Reset I</button>
 <button onclick=invert()>Invert axis</button>
+</div>
+<div class=gain id=gy style=display:none>
+<div class=row><span style=color:var(--dim)>yaw rate damper</span><b id=eY>--</b></div>
+<div class=gl><label>Kp</label><input type=range min=0 max=1.5 step=0.01 id=ykpr oninput=yawGain(this.value)><input type=number step=0.01 id=ykp onchange=yawGain(this.value)></div>
+<div class=cap style=margin-top:4px>Damps rotation only. It will not hold a
+heading &mdash; nothing fuses the magnetometer, so slow yaw drift is expected
+and normal.</div>
 </div>
 <div id=saved class=cap></div>
 </div>
@@ -1069,8 +1167,20 @@ second, and steady error is near zero.</div>
 </div>
 </div>
 
+<div class=p><h2>Shareable log</h2>
+<div class=cap style=margin:0>A compact summary plus a downsampled trace, small
+enough to paste into a chat. Includes the gains, the flight statistics and an
+oscillation estimate &mdash; everything needed to diagnose a tune.</div>
+<div class=g style="margin:8px 0">
+<button onclick=makeLog()>Generate</button>
+<button onclick=copyLog()>Copy</button>
+</div>
+<textarea id=logOut readonly placeholder="press Generate after a flight"></textarea>
+<div class=cap id=logMsg></div>
+</div>
+
 <script>
-const S={run:false,mode:0,base:0,ax:0,win:30,
+const S={run:false,mode:0,base:0,ax:0,win:30,flight:0,yawkp:0,tilt:60,
  kp:[0,0],ki:[0,0],kd:[0,0],inv:[0,0],sp:[0,0]};
 const LOG={t0:Date.now(),s:[],steps:[],cur:null,hist:[]};
 const CAP=30000;
@@ -1089,7 +1199,9 @@ async function loadCfg(){
     document.getElementById('kd'+a).value=c.kd[a];document.getElementById('kd'+a+'r').value=c.kd[a];
   }
   baseR.value=c.base;baseV.textContent=c.base+'%';
-  paintMode();
+  S.flight=c.flight;S.yawkp=c.yawkp;S.tilt=c.tilt;
+  ykp.value=c.yawkp;ykpr.value=c.yawkp;
+  paintMode();paintFlight();
 }
 function gain(a,k,v){
   v=parseFloat(v)||0;S[k][a]=v;
@@ -1097,6 +1209,30 @@ function gain(a,k,v){
   j('/api/pidset?'+k+a+'='+v);
 }
 function setBase(v){S.base=+v;baseV.textContent=v+'%';j('/api/pidset?base='+v)}
+function setFlight(f){S.flight=f;paintFlight();j('/api/pidset?flight='+f)}
+function paintFlight(){
+  fm0.className=S.flight?'':'sel';fm1.className=S.flight?'sel':'';
+  thrPanel.style.display=S.flight?'':'none';
+  basePanel.style.display=S.flight?'none':'';   // same value, one control each mode
+  gy.style.display=S.flight?'':'none';
+  document.getElementById('banner').className=S.flight?'warn fly':'warn';
+  document.getElementById('banner').innerHTML=S.flight?
+    '<b>Flight mode. Propellers on, clear space, nothing above you.</b> The '+
+    'link is WiFi to a browser: if it drops for 1.5 s the firmware cuts the '+
+    'motors and the drone falls. Fly low over something soft. The tilt cutoff '+
+    'disarms past '+S.tilt+'&deg;.'
+    :
+    '<b>Propellers off. Gimbal mounted.</b> This closes a feedback loop from '+
+    'the IMU onto the motors. A wrong gain oscillates the frame hard and an '+
+    'unrestrained airframe will flip itself off the bench. Mount it in a '+
+    'two-axis gimbal that lets it rotate but not translate, and keep a hand '+
+    'near STOP.';
+}
+function setThr(v){v=Math.max(0,Math.min(90,+v));thrR.value=v;
+  thrBig.textContent=v+'%';thrCmd.textContent=v+'%';j('/api/pidset?base='+v)}
+function thrStep(d){setThr((+thrR.value)+d)}
+function yawGain(v){v=parseFloat(v)||0;S.yawkp=v;ykp.value=v;ykpr.value=v;
+  j('/api/pidset?yawkp='+v)}
 function setMode(m){
   S.mode=m;S.ax=(m===2)?1:0;paintMode();
   j('/api/pidset?mode='+m);
@@ -1121,7 +1257,8 @@ function invert(){S.inv[S.ax]=S.inv[S.ax]?0:1;j('/api/pidset?inv'+S.ax+'='+S.inv
 async function saveGains(){await j('/api/pidsave');
   saved.textContent='gains saved to NVS at '+new Date().toLocaleTimeString()}
 function toggleRun(){S.run=!S.run;j('/api/pidset?run='+(S.run?1:0))}
-function estop(){S.run=false;j('/api/stop')}
+function estop(){S.run=false;thrR.value=0;thrBig.textContent='0%';
+  thrCmd.textContent='0%';j('/api/stop')}
 function setWin(w){S.win=w}
 
 /* ------------------------------------------------------ step measurement -- */
@@ -1306,6 +1443,77 @@ function exportCsv(){
 }
 function clearLog(){LOG.s=[];LOG.steps=[];LOG.cur=null;LOG.t0=Date.now()}
 
+/* ------------------------------------------------------- shareable log --- */
+function stats(f,rows){
+  let mn=1e9,mx=-1e9,sum=0,sq=0;
+  for(const r of rows){const v=f(r);if(v<mn)mn=v;if(v>mx)mx=v;sum+=v;sq+=v*v}
+  const n=rows.length||1;
+  return{min:mn,max:mx,mean:sum/n,rms:Math.sqrt(sq/n)};
+}
+/* dominant oscillation frequency from mean-crossings of the error signal */
+function oscHz(f,rows){
+  if(rows.length<8)return 0;
+  const m=stats(f,rows).mean;
+  let cross=0,prev=f(rows[0])-m;
+  for(let i=1;i<rows.length;i++){const v=f(rows[i])-m;
+    if((prev<0&&v>=0)||(prev>0&&v<=0))cross++;prev=v}
+  const dur=rows[rows.length-1].t-rows[0].t;
+  return dur>0?(cross/2)/dur:0;
+}
+function makeLog(){
+  const rows=LOG.s;
+  if(rows.length<5){logOut.value='';logMsg.textContent='not enough data - fly first, then Generate';return}
+  const D=String.fromCharCode(176),n=rows.length;
+  const dur=rows[n-1].t-rows[0].t;
+  const eR=r=>r.sp[0]-r.ang[0], eP=r=>r.sp[1]-r.ang[1];
+  const sR=stats(r=>r.ang[0],rows), sP=stats(r=>r.ang[1],rows);
+  const xR=stats(eR,rows), xP=stats(eP,rows);
+  const vb=stats(r=>r.vb,rows), th=stats(r=>r.thr,rows);
+  const MODE=['off','roll','pitch','both'][S.mode];
+  const f=v=>v.toFixed(2);
+
+  let o='=== LiteWing PID log ===\n';
+  o+='mode '+(S.flight?'FLIGHT':'bench')+'   axis '+MODE+'   samples '+n+
+     '   duration '+dur.toFixed(1)+'s\n';
+  o+='throttle cmd '+S.base+'%  applied mean '+f(th.mean)+'%  max '+f(th.max)+'%\n';
+  o+='vbat '+f(vb.max)+' -> '+f(vb.min)+' V\n';
+  o+='roll  Kp '+S.kp[0]+'  Ki '+S.ki[0]+'  Kd '+S.kd[0]+'  inv '+S.inv[0]+'\n';
+  o+='pitch Kp '+S.kp[1]+'  Ki '+S.ki[1]+'  Kd '+S.kd[1]+'  inv '+S.inv[1]+'\n';
+  o+='yaw damper Kp '+S.yawkp+'   tilt cutoff '+S.tilt+D+'\n';
+  o+='--- angle stats (deg) ---\n';
+  o+='roll  mean '+f(sR.mean)+'  min '+f(sR.min)+'  max '+f(sR.max)+
+     '  err rms '+f(xR.rms)+'  osc '+oscHz(eR,rows).toFixed(2)+' Hz\n';
+  o+='pitch mean '+f(sP.mean)+'  min '+f(sP.min)+'  max '+f(sP.max)+
+     '  err rms '+f(xP.rms)+'  osc '+oscHz(eP,rows).toFixed(2)+' Hz\n';
+  const last=rows[n-1];
+  o+='motors last '+last.duty.join('/')+'   yaw out '+f(last.yaw)+'%\n';
+  o+='--- trace (downsampled) ---\n';
+  o+='t,roll,pitch,errR,errP,Pr,Ir,Dr,Pp,Ip,Dp,m1,m2,m3,m4,thr,vbat\n';
+  const step=Math.max(1,Math.ceil(n/60));
+  for(let i=0;i<n;i+=step){const r=rows[i];
+    o+=[r.t.toFixed(2),r.ang[0].toFixed(1),r.ang[1].toFixed(1),
+        eR(r).toFixed(1),eP(r).toFixed(1),
+        r.p[0].toFixed(1),r.i[0].toFixed(1),r.d[0].toFixed(1),
+        r.p[1].toFixed(1),r.i[1].toFixed(1),r.d[1].toFixed(1),
+        r.duty[0],r.duty[1],r.duty[2],r.duty[3],
+        r.thr.toFixed(0),r.vb.toFixed(2)].join(',')+'\n';
+  }
+  logOut.value=o;
+  logMsg.textContent=o.length+' characters, '+Math.ceil(n/step)+' rows - safe to paste';
+}
+function copyLog(){
+  if(!logOut.value){makeLog();if(!logOut.value)return}
+  logOut.select();logOut.setSelectionRange(0,999999);
+  let ok=false;
+  try{ok=document.execCommand('copy')}catch(e){}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(logOut.value).then(
+      ()=>{logMsg.textContent='copied to clipboard'},
+      ()=>{if(!ok)logMsg.textContent='could not copy - select the text and copy manually'});
+  } else logMsg.textContent=ok?'copied to clipboard':
+    'could not copy - select the text and copy manually';
+}
+
 /* ---------------------------------------------------------------- poll --- */
 async function tick(){
   const s=await j('/api/pidstate');
@@ -1318,16 +1526,29 @@ async function tick(){
   stImu.textContent=s.imu?'online':'no response';
   stImu.style.color=s.imu?'var(--ok)':'var(--hot)';
   stV.textContent=s.vbat.toFixed(2)+' V';
+  stYaw.textContent=s.yrate.toFixed(1)+String.fromCharCode(176)+'/s';
+  const tilt=Math.max(Math.abs(s.ang[0]),Math.abs(s.ang[1]));
+  stTilt.textContent=tilt.toFixed(0)+String.fromCharCode(176);
+  stTilt.style.color=tilt>S.tilt*0.7?'var(--hot)':'var(--fg)';
+  thrNow.textContent=s.thr.toFixed(1)+'%';
+  eY.textContent='rate '+s.yrate.toFixed(1)+String.fromCharCode(176)+'/s';
+  if(s.fault){fault.className='fault on';
+    fault.textContent=s.fault===1?
+      'CUT OUT: tilt exceeded '+S.tilt+String.fromCharCode(176)+
+      ' - the loop stopped and disarmed. Level it, then START LOOP again.':
+      'CUT OUT: IMU stopped responding. The loop stopped and disarmed.';
+  } else fault.className='fault';
   const D=String.fromCharCode(176);
   eR.textContent='err '+(s.sp[0]-s.ang[0]).toFixed(1)+D;
   eP.textContent='err '+(s.sp[1]-s.ang[1]).toFixed(1)+D;
 
   if(LOG.s.length<CAP)
     LOG.s.push({t:now(),sp:s.sp,ang:s.ang,p:s.p,i:s.i,d:s.d,o:s.o,
-                rate:s.rate,duty:s.duty,vb:s.vbat});
+                rate:s.rate,duty:s.duty,vb:s.vbat,yaw:s.yaw,
+                yrate:s.yrate,thr:s.thr});
 }
 async function poll(){await tick();setTimeout(poll,90)}
-loadCfg();paintHist();poll();
+loadCfg();paintHist();paintFlight();poll();
 /* close out a step 4 s after it was issued so the history row lands */
 const STEP_WIN=6;               // measurement window, seconds
 setInterval(()=>{if(LOG.cur&&now()-LOG.cur.t0>STEP_WIN)finishStep()},250);
@@ -1390,6 +1611,9 @@ static void hPidCfg() {
   j += ",\"base\":" + String(pid.base) + ",\"mode\":" + String(pid.mode);
   j += ",\"ilim\":" + String(pid.iLim,2) + ",\"olim\":" + String(pid.oLim,2);
   j += ",\"inv\":[" + String(pid.inv[0]) + "," + String(pid.inv[1]) + "]";
+  j += ",\"flight\":" + String(pid.flight);
+  j += ",\"yawkp\":" + String(pid.yawKp,3) + ",\"yawlim\":" + String(pid.yawLim,1);
+  j += ",\"tilt\":" + String(pid.tiltCut,0) + ",\"thrmin\":" + String(pid.thrMin);
   j += ",\"run\":" + String(pidRun?"true":"false") + "}";
   server.send(200, "application/json", j);
 }
@@ -1401,7 +1625,19 @@ static void hPidSet() {
   if (server.hasArg("ki1")) pid.ki[1] = server.arg("ki1").toFloat();
   if (server.hasArg("kd0")) pid.kd[0] = server.arg("kd0").toFloat();
   if (server.hasArg("kd1")) pid.kd[1] = server.arg("kd1").toFloat();
-  if (server.hasArg("base")) pid.base = constrain(server.arg("base").toInt(), 0, 60);
+  if (server.hasArg("base")) {
+    pid.base = constrain(server.arg("base").toInt(), 0, pid.flight ? 90 : 60);
+    baseTgt  = pid.base;
+    if (!pidRun) baseNow = 0;
+  }
+  if (server.hasArg("flight")) {
+    int f = server.arg("flight").toInt() ? 1 : 0;
+    if (f != pid.flight) { pidStop(); pid.flight = f; }   // never switch live
+  }
+  if (server.hasArg("yawkp"))  pid.yawKp  = constrain(server.arg("yawkp").toFloat(), 0.0f, 2.0f);
+  if (server.hasArg("yawlim")) pid.yawLim = constrain(server.arg("yawlim").toFloat(), 0.0f, 30.0f);
+  if (server.hasArg("tilt"))   pid.tiltCut= constrain(server.arg("tilt").toFloat(), 20.0f, 89.0f);
+  if (server.hasArg("clearf")) pidFault = 0;
   if (server.hasArg("mode")) pid.mode = constrain(server.arg("mode").toInt(), 0, 3);
   if (server.hasArg("ilim")) pid.iLim = constrain(server.arg("ilim").toFloat(), 0.0f, 50.0f);
   if (server.hasArg("olim")) pid.oLim = constrain(server.arg("olim").toFloat(), 0.0f, 50.0f);
@@ -1429,6 +1665,11 @@ static void hPidState() {
                        String(duty[2]) + "," + String(duty[3]) + "]";
   j += ",\"vbat\":" + String(vbat(),3);
   j += ",\"imu\":" + String(imuOk?"true":"false");
+  j += ",\"yaw\":" + String(yawOut,3);
+  j += ",\"yrate\":" + String(gz/16.4f-gBias[2],2);
+  j += ",\"thr\":" + String(baseNow,1) + ",\"thrt\":" + String(baseTgt);
+  j += ",\"flight\":" + String(pid.flight);
+  j += ",\"fault\":" + String(pidFault);
   j += ",\"hz\":" + String(pidDt > 0 ? 1.0f/pidDt : 0.0f, 0);
   j += ",\"t\":" + String(millis()) + "}";
   server.send(200, "application/json", j);

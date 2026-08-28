@@ -173,6 +173,92 @@ zero**. Compare candidate tunes on the RMS error column of the history table.
 
 ---
 
+## Flight mode: hovering
+
+**Mode → Flight / hover** switches the page from gimbal tuning to free flight.
+Switching modes always stops the loop.
+
+What changes:
+
+| | Bench / gimbal | Flight / hover |
+|---|---|---|
+| Throttle ceiling | 60% | 90% |
+| Yaw rate damper | off | on |
+| Tilt cutoff | off | disarms past 60° |
+| Integrators on the ground | always active | held at zero below 12% throttle |
+| Throttle control | Base throttle panel | Throttle panel, ramped |
+
+### Before the first hover
+
+- **Props on, and everything else off the table.** Fly low, over something
+  soft, with nothing above you.
+- **Tune on the gimbal first.** Get roll and pitch stable with `Both` selected
+  before you ever leave the ground. Gains found on a stand are a starting point
+  — the gimbal adds friction and inertia the free frame does not have, so
+  expect to soften Kp slightly in the air.
+- **Calibrate the gyro** on the bench page, drone flat and still.
+- **Check the tilt cutoff** is armed. Past 60° the loop stops and disarms, so a
+  flip cuts the motors instead of grinding them.
+
+### Hovering
+
+1. **Flight mode**, axis **Both**, setpoint **Level (0°)**.
+2. **START LOOP.** Throttle always starts at **0** in flight mode — it must be
+   raised deliberately.
+3. **Raise throttle in 5% steps.** Watch `applied (ramped)` catch up to
+   `commanded`; the ramp is 45%/s so it lags on purpose.
+4. Around **35–45%** the frame gets light. Keep going in small steps until it
+   lifts, usually **40–55%** on a charged pack.
+5. **Trim with ±5%** to hold height. There is no altitude hold — height is open
+   loop on your thumb.
+6. To land, walk the throttle down; **Idle** drops to 0 and it will fall from
+   wherever it is.
+
+### What will and will not hold
+
+**Roll and pitch are held to level.** That is the whole loop.
+
+**Yaw is only damped, not held.** The yaw control is a rate damper on the gyro:
+it resists spinning up, but it will not return to a heading, because nothing
+fuses the magnetometer. Slow drift in yaw is expected and normal — do not tune
+against it.
+
+**Height is not held at all.** No barometer fusion, no altitude loop. The
+throttle slider is the only height control, and battery sag means the same
+throttle gives less lift as the pack drains.
+
+**Position is not held.** Level is not the same as stationary. The frame will
+drift with any air movement or any residual trim error, and you have no
+position control to correct it. Fly in a confined, still space.
+
+### Failsafes
+
+| Trigger | What happens |
+|---|---|
+| Tilt past 60° | Loop stops, motors cut, banner shows the reason |
+| IMU stops responding | Loop stops, motors cut |
+| Browser stops polling 1.5 s | Watchdog cuts the loop and motors |
+| Mode switch, motor slider, sweep | Loop stops |
+
+**The watchdog is the one to think about.** The control link is WiFi to a
+browser. If it drops for 1.5 seconds — phone locks, tab backgrounds, you walk
+out of range — the firmware cuts the motors and the drone falls. That is the
+correct failure for a small indoor drone, since the alternative is a flyaway,
+but it means **keep the screen awake and stay close to the drone.**
+
+### The shareable log
+
+The **Shareable log** panel at the bottom produces a compact block: gains,
+throttle, battery, per-axis angle statistics, an oscillation frequency
+estimate, and a downsampled trace of about 60 rows. It prints its own character
+count so you know it will paste.
+
+**Generate** after a flight, **Copy**, and paste it somewhere for analysis. It
+carries everything needed to diagnose a tune without the raw multi-thousand-row
+CSV. Use **Export CSV** when you want the full-rate data instead.
+
+---
+
 ## Diagnosis
 
 | What you see | Turn this |
@@ -185,6 +271,10 @@ zero**. Compare candidate tunes on the RMS error column of the history table.
 | Fuzzy trace, motors buzzing | Kd down |
 | Runs away to the stop | STOP → **Invert axis** |
 | All four motors move together | Mixer sign wrong for your frame |
+| Lifts one corner first, tips over | Motor mapping or an axis sign is wrong — recheck on the gimbal |
+| Drifts steadily one way in hover | Trim error; add a little Ki, or check the gyro calibration |
+| Slowly rotates in hover | Normal — yaw is damped, not held |
+| Leaps sideways the instant it lifts | Integrator wound up on the ground; raise `thrMin` |
 | Total term clipped flat | Saturating `oLim` — see below |
 
 ---
