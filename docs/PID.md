@@ -4,6 +4,9 @@ A second page, at **<http://192.168.4.1/pid>**, that closes a feedback loop from
 the IMU onto the motors and gives you the instrumentation to tune it. The bench
 page at `/` is unchanged and independent.
 
+For a hands-on walkthrough of the controls and the axis mapping, start with
+[TUNING.md](TUNING.md). This document is the reference behind it.
+
 This is a **gimbal tuning rig**, not a flight controller. It holds roll and
 pitch angles against a setpoint so you can find gains on a stand before
 trusting them in the air.

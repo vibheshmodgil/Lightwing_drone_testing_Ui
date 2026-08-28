@@ -77,7 +77,8 @@ auto-reset transistors populated.
 
 The PID page closes a feedback loop from the IMU onto the motors so you can
 tune gains on a two-axis stand. It has its own safety rules — see
-[docs/PID.md](docs/PID.md) before starting the loop. The two are interlocked:
+[docs/TUNING.md](docs/TUNING.md) for the walkthrough and
+[docs/PID.md](docs/PID.md) for the theory before starting the loop. The two are interlocked:
 starting the stabiliser stops a sweep, and touching a motor slider on the bench
 page drops the loop.
 
@@ -91,8 +92,11 @@ page drops the loop.
   interpret a health sweep
 - **[docs/API.md](docs/API.md)** — the HTTP endpoints, for scripting the rig
   from `curl` or Python instead of the browser
-- **[docs/PID.md](docs/PID.md)** — the stabiliser: control law, mixer, tuning
-  procedure, how to read a step response, and its API
+- **[docs/TUNING.md](docs/TUNING.md)** — hands-on walkthrough: what every
+  control on the `/pid` page does, how the two axes map to motor pairs, and the
+  order to turn the knobs in
+- **[docs/PID.md](docs/PID.md)** — the stabiliser in depth: control law, mixer,
+  step-response metrics, and its API
 
 ---
 
